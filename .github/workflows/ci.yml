@@ -40,10 +40,32 @@ jobs:
       - name: Lint
         run: ./Scripts/lint.sh lint
 
-      - name: Swift Test
-        timeout-minutes: 60
+      - name: Swift Test (parallel)
+        timeout-minutes: 25
         run: |
-          swift test --no-parallel
+          swift test --parallel \
+            --skip ClaudeOAuthCredentialsStoreSecurityCLITests \
+            --skip CLIOpenAIDashboardCacheTests \
+            --skip CodexAccountScopedRefreshDashboardCleanupTests \
+            --skip CodexAccountScopedRefreshTests \
+            --skip CodexAccountPromotionServiceTests \
+            --skip CodexBaselineCharacterizationTests \
+            --skip CodexDashboardWorkedExampleParityTests \
+            --skip CodexUsageFetcherFallbackTests \
+            --skip CodexWebDashboardStrategyAuthorityTests \
+            --skip OpenAIDashboardNavigationDelegateTests \
+            --skip StatusMenuCodexSwitcherTests \
+            --skip StatusMenuHostedSubmenuRefreshTests \
+            --skip StatusMenuSwitcherClickTests \
+            --skip StatusMenuTests \
+            --skip StatusMenuTokenAccountSwitcherTests \
+            --skip SubprocessRunnerTests
+
+      - name: Swift Test (serial)
+        timeout-minutes: 40
+        run: |
+          swift test --no-parallel \
+            --filter 'ClaudeOAuthCredentialsStoreSecurityCLITests|CLIOpenAIDashboardCacheTests|CodexAccountScopedRefreshDashboardCleanupTests|CodexAccountScopedRefreshTests|CodexAccountPromotionServiceTests|CodexBaselineCharacterizationTests|CodexDashboardWorkedExampleParityTests|CodexUsageFetcherFallbackTests|CodexWebDashboardStrategyAuthorityTests|OpenAIDashboardNavigationDelegateTests|StatusMenuCodexSwitcherTests|StatusMenuHostedSubmenuRefreshTests|StatusMenuSwitcherClickTests|StatusMenuTests|SubprocessRunnerTests'
 
   build-linux-cli:
     timeout-minutes: 20
