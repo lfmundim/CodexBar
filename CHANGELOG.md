@@ -11,6 +11,7 @@
 ### Added
 - AWS Bedrock: support resolving usage and cost-history credentials from a named AWS profile via the AWS CLI (#1190). Thanks @oleksandr-soldatov!
 - Codex: show Codex Spark model-specific usage as an optional extra quota lane (#1195, fixes #1177). Thanks @LeoLin990405!
+- Localization: add Swedish as a selectable app language (#1186). Thanks @yeager!
 
 ### Fixed
 - Cost history: make token-cost JSONL scans cancellation-aware so quitting, forced refreshes, and account switches can stop stale scans sooner.
