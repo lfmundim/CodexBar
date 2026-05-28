@@ -16,6 +16,7 @@
 <li>Antigravity: show the complete per-model quota breakdown alongside the existing summary lanes (#1139). Thanks @guhyun9454!</li>
 <li>Widget: show tertiary usage rows for providers that expose a third quota lane (#1160). Thanks @LeoLin990405!</li>
 <li>DeepSeek: show optional web-session usage and cost summaries alongside the balance card (#1166). Thanks @Yuxin-Qiao!</li>
+<li>OpenAI: scope Admin API usage to the configured project and keep token accounts from inheriting stale project filters (#1168). Thanks @mstallone!</li>
 </ul>
 <h3>Fixed</h3>
 <ul>
@@ -27,6 +28,8 @@
 <li>StepFun: refresh expired Oasis tokens and persist recovered manual sessions. Thanks @LeoLin990405!</li>
 <li>Release: prevent manual CLI artifact builds from publishing or clobbering release assets (#1154). Thanks @jskoiz!</li>
 <li>Cost history: route OpenAI and Mistral API spend through the shared cost-history cards, including OpenAI request counts (#1163). Thanks @LeoLin990405!</li>
+<li>Menu: keep provider switcher Cmd-number and arrow shortcuts working while the open menu is tracking events (#1157, fixes #1156 and #1144). Thanks @anirudhvee!</li>
+<li>Codex: prevent fork token replay from overcounting corrected cumulative session totals (#1164). Thanks @xx205!</li>
 <li>Alibaba Token Plan: update usage refreshes to the Bailian subscription-summary endpoint (#1142). Thanks @YanxinXue!</li>
 <li>Ollama: show pace projections for documented 5-hour session and 7-day weekly usage windows (#1136). Thanks @bdamokos!</li>
 <li>Localization: polish Simplified Chinese wording and add notification strings (#1165). Thanks @fanfanci!</li>
