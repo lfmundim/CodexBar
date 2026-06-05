@@ -595,6 +595,29 @@ struct MiniMaxTokenPlanChangeTests {
     }
 
     @Test
+    func `combo metadata rejects malformed host override before sending credentials`() async throws {
+        let transport = ProviderHTTPTransportStub { request in
+            Issue.record("Unexpected request to \(request.url?.absoluteString ?? "<nil>")")
+            return Self.httpResponse(
+                url: URL(string: "https://unused.example")!,
+                body: "{}",
+                contentType: "application/json")
+        }
+
+        await #expect(throws: MiniMaxUsageError.self) {
+            try await MiniMaxSubscriptionMetadataFetcher.fetch(
+                cookieHeader: "_token=secret",
+                groupID: "2013894056999916075",
+                region: .chinaMainland,
+                environment: [MiniMaxSettingsReader.hostKey: "bad host"],
+                transport: transport)
+        }
+
+        let requests = await transport.requests()
+        #expect(requests.isEmpty)
+    }
+
+    @Test
     func `web usage fetch preserves combo metadata cancellation`() async throws {
         let now = Date(timeIntervalSince1970: 1_780_282_340)
         let transport = ProviderHTTPTransportStub { request in

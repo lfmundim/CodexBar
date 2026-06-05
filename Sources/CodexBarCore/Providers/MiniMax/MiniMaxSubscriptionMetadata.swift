@@ -60,7 +60,11 @@ enum MiniMaxSubscriptionMetadataFetcher {
 
     static func resolveComboURL(region: MiniMaxAPIRegion, environment: [String: String]) throws -> URL {
         let host = MiniMaxSettingsReader.hostOverride(environment: environment) ?? self.defaultWebHost(region: region)
-        var components = URLComponents(string: host.hasPrefix("http") ? host : "https://\(host)")!
+        guard var components = URLComponents(string: host.hasPrefix("http") ? host : "https://\(host)"),
+              components.host?.isEmpty == false
+        else {
+            throw MiniMaxUsageError.apiError("MiniMax combo metadata host is invalid.")
+        }
         guard components.scheme?.lowercased() == "https" else {
             throw MiniMaxUsageError.apiError("MiniMax combo metadata host must use HTTPS.")
         }
@@ -70,7 +74,10 @@ enum MiniMaxSubscriptionMetadataFetcher {
             URLQueryItem(name: "cycle_type", value: "3"),
             URLQueryItem(name: "resource_package_type", value: "7"),
         ]
-        return components.url!
+        guard let url = components.url else {
+            throw MiniMaxUsageError.apiError("MiniMax combo metadata host is invalid.")
+        }
+        return url
     }
 
     private static func validateBaseResponse(in object: Any) throws {
