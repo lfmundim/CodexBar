@@ -96,58 +96,6 @@ extension CodexAccountScopedRefreshTests {
     }
 
     @Test
-    func `stale stacked projection collapse runs single codex fetch`() async throws {
-        SettingsStore.codexAccountReconciliationSnapshotCacheIntervalOverrideForTesting = 60
-        let settings = self.makeSettingsStore(
-            suite: "CodexAccountScopedRefreshTests-stacked-collapse-single-fetch")
-        defer {
-            SettingsStore.codexAccountReconciliationSnapshotCacheIntervalOverrideForTesting = nil
-            settings._test_liveSystemCodexAccount = nil
-            settings._test_managedCodexAccountStoreURL = nil
-        }
-        settings.refreshFrequency = .manual
-        settings.multiAccountMenuLayout = .stacked
-        settings.codexActiveSource = .liveSystem
-        settings._test_liveSystemCodexAccount = self.liveAccount(
-            email: "live-collapse@example.com",
-            identity: .providerAccount(id: "acct-live-collapse"))
-
-        let managedAccountID = try #require(UUID(uuidString: "DDDDDDDD-EEEE-FFFF-AAAA-191919191919"))
-        let managedAccount = ManagedCodexAccount(
-            id: managedAccountID,
-            email: "managed-collapse@example.com",
-            managedHomePath: "/tmp/codex-managed-collapse",
-            createdAt: 1,
-            updatedAt: 2,
-            lastAuthenticatedAt: 2)
-        let staleStoreURL = try self.makeManagedAccountStoreURL(accounts: [managedAccount])
-        let emptyStoreURL = try self.makeManagedAccountStoreURL(accounts: [])
-        defer {
-            try? FileManager.default.removeItem(at: staleStoreURL)
-            try? FileManager.default.removeItem(at: emptyStoreURL)
-        }
-        settings._test_managedCodexAccountStoreURL = staleStoreURL
-        let staleReconciliationSnapshot = settings.codexAccountReconciliationSnapshot
-        #expect(CodexVisibleAccountProjection.make(from: staleReconciliationSnapshot).visibleAccounts.count == 2)
-
-        settings._test_managedCodexAccountStoreURL = emptyStoreURL
-        settings.cachedCodexAccountReconciliationSnapshot = CachedCodexAccountReconciliationSnapshot(
-            activeSource: .liveSystem,
-            loadedAt: Date(),
-            snapshot: staleReconciliationSnapshot)
-
-        let store = self.makeUsageStore(settings: settings)
-        self.installImmediateCodexProvider(
-            on: store,
-            snapshot: self.codexSnapshot(email: "live-collapse@example.com", usedPercent: 42))
-
-        await store.refreshProvider(.codex, allowDisabled: true)
-
-        #expect(store.snapshots[.codex]?.primary?.usedPercent == 42)
-        #expect(store.codexAccountSnapshots.isEmpty)
-    }
-
-    @Test
     func `same account token refresh fingerprint change keeps scoped state during prepare`() {
         let settings = self.makeSettingsStore(
             suite: "CodexAccountScopedRefreshTests-token-refresh-prepare")

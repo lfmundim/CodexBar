@@ -81,6 +81,7 @@ extension UsageStore {
             self.codexAccountSnapshots = []
             return
         }
+        let managedAccountIDsWithReadableAuthAtStart = self.codexManagedAccountIDsWithReadableAuth()
 
         let originalVisibleAccountID = projection.activeVisibleAccountID
         let originalSelectionSource = originalVisibleAccountID.flatMap {
@@ -124,7 +125,8 @@ extension UsageStore {
             }
         }
 
-        let currentProjection = self.freshCodexVisibleAccountProjectionForAccountRefresh()
+        let currentProjection = self.freshCodexVisibleAccountProjectionForAccountRefresh(
+            requireLiveManagedAuthFor: managedAccountIDsWithReadableAuthAtStart)
         let currentSnapshots = snapshots.compactMap { snapshot -> CodexAccountUsageSnapshot? in
             guard let currentAccount = Self.currentCodexVisibleAccount(
                 matching: snapshot.account,
@@ -211,19 +213,29 @@ extension UsageStore {
         return Self.codexVisibleAccountMatchesCurrentProjection(originalAccount, account: currentActiveAccount)
     }
 
-    private func freshCodexVisibleAccountProjectionForAccountRefresh() -> CodexVisibleAccountProjection {
+    private func freshCodexVisibleAccountProjectionForAccountRefresh(
+        requireLiveManagedAuthFor accountIDs: Set<UUID> = []) -> CodexVisibleAccountProjection
+    {
         // Auth files can change while account fetches are in flight, so account refreshes bypass the
         // short-lived reconciliation cache used for normal menu rendering and stale-result guards.
         self.settings.invalidateCodexAccountReconciliationSnapshotCache()
         let snapshot = self.settings.codexAccountReconciliationSnapshot
         return Self.codexVisibleAccountProjectionWithFreshManagedAuthFingerprints(
             CodexVisibleAccountProjection.make(from: snapshot),
-            snapshot: snapshot)
+            snapshot: snapshot,
+            requireLiveManagedAuthFor: accountIDs)
+    }
+
+    private func codexManagedAccountIDsWithReadableAuth() -> Set<UUID> {
+        Set(self.settings.codexAccountReconciliationSnapshot.storedAccounts.compactMap { account in
+            CodexAuthFingerprint.fingerprint(homePath: account.managedHomePath) == nil ? nil : account.id
+        })
     }
 
     private nonisolated static func codexVisibleAccountProjectionWithFreshManagedAuthFingerprints(
         _ projection: CodexVisibleAccountProjection,
-        snapshot: CodexAccountReconciliationSnapshot) -> CodexVisibleAccountProjection
+        snapshot: CodexAccountReconciliationSnapshot,
+        requireLiveManagedAuthFor accountIDs: Set<UUID> = []) -> CodexVisibleAccountProjection
     {
         let managedRuntimeStates = Dictionary(
             uniqueKeysWithValues: snapshot.storedAccounts.map { account in
@@ -234,9 +246,12 @@ extension UsageStore {
                     nil
                 }
                 let authFingerprint = CodexAuthFingerprint.fingerprint(homePath: account.managedHomePath)
+                let requiresLiveAuth = accountIDs.contains(account.id)
                 return (account.id, CodexManagedVisibleAccountRuntimeState(
-                    authFingerprint: authFingerprint ?? account.authFingerprint,
-                    workspaceAccountID: authFingerprint == nil ? account.workspaceAccountID : workspaceAccountID))
+                    authFingerprint: authFingerprint ?? (requiresLiveAuth ? nil : account.authFingerprint),
+                    workspaceAccountID: authFingerprint == nil && requiresLiveAuth
+                        ? nil
+                        : (workspaceAccountID ?? account.workspaceAccountID)))
             })
         let visibleAccounts = projection.visibleAccounts.map { account in
             guard case let .managedAccount(id) = account.selectionSource else { return account }
