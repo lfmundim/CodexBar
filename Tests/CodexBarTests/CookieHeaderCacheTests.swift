@@ -243,7 +243,68 @@ struct CookieHeaderCacheTests {
                 cookieHeader: "auth=behind-the-back",
                 storedAt: Date(timeIntervalSince1970: 0),
                 sourceLabel: "Chrome"))
+        defer { KeychainCacheStore.clear(key: .cookie(provider: provider)) }
         #expect(CookieHeaderCache.loadForDisplay(provider: provider) == nil)
+    }
+
+    @Test
+    func `loadForDisplay migrates legacy cache asynchronously`() async throws {
+        KeychainCacheStore.setTestStoreForTesting(true)
+        defer { KeychainCacheStore.setTestStoreForTesting(false) }
+        CookieHeaderCache.resetDisplayCacheForTesting()
+        defer { CookieHeaderCache.resetDisplayCacheForTesting() }
+
+        let legacyBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        CookieHeaderCache.setLegacyBaseURLOverrideForTesting(legacyBase)
+        defer { CookieHeaderCache.setLegacyBaseURLOverrideForTesting(nil) }
+
+        let provider: UsageProvider = .codex
+        CookieHeaderCache.store(
+            CookieHeaderCache.Entry(
+                cookieHeader: "auth=legacy-display",
+                storedAt: Date(timeIntervalSince1970: 0),
+                sourceLabel: "Legacy"),
+            to: CookieHeaderCache.legacyURLForTesting(provider: provider))
+
+        #expect(CookieHeaderCache.loadForDisplay(provider: provider)?.cookieHeader == "auth=legacy-display")
+        for _ in 0..<100 {
+            if !CookieHeaderCache.hasLegacyEntryForTesting(provider: provider),
+               CookieHeaderCache.hasKeychainEntryForTesting(provider: provider)
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!CookieHeaderCache.hasLegacyEntryForTesting(provider: provider))
+        #expect(CookieHeaderCache.hasKeychainEntryForTesting(provider: provider))
+        CookieHeaderCache.clear(provider: provider)
+    }
+
+    @Test
+    func `delayed legacy migration cannot restore a cleared cache`() {
+        KeychainCacheStore.setTestStoreForTesting(true)
+        defer { KeychainCacheStore.setTestStoreForTesting(false) }
+        CookieHeaderCache.resetDisplayCacheForTesting()
+        defer { CookieHeaderCache.resetDisplayCacheForTesting() }
+
+        let legacyBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        CookieHeaderCache.setLegacyBaseURLOverrideForTesting(legacyBase)
+        defer { CookieHeaderCache.setLegacyBaseURLOverrideForTesting(nil) }
+
+        let provider: UsageProvider = .codex
+        CookieHeaderCache.store(
+            CookieHeaderCache.Entry(
+                cookieHeader: "auth=legacy-display",
+                storedAt: Date(timeIntervalSince1970: 0),
+                sourceLabel: "Legacy"),
+            to: CookieHeaderCache.legacyURLForTesting(provider: provider))
+
+        CookieHeaderCache.clear(provider: provider)
+        #expect(CookieHeaderCache.migrateLegacyEntryIfNeededForTesting(provider: provider) == nil)
+        #expect(!CookieHeaderCache.hasLegacyEntryForTesting(provider: provider))
+        #expect(!CookieHeaderCache.hasKeychainEntryForTesting(provider: provider))
     }
 
     #if os(macOS)

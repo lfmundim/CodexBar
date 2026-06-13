@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum CookieHeaderCache {
     public enum Scope: Sendable, Equatable {
@@ -46,14 +51,16 @@ public enum CookieHeaderCache {
     }
 
     private enum LoadOutcome {
-        case authoritative(Entry?)
+        case authoritative(Entry?, loadedFromLegacy: Bool)
         case temporarilyUnavailable
     }
 
+    private static let legacyMutationLock = NSLock()
     private static let displayCacheLock = NSLock()
     private nonisolated(unsafe) static var displayCache: [KeychainCacheStore.Key: DisplaySnapshot] = [:]
     private nonisolated(unsafe) static var displayGenerations: [KeychainCacheStore.Key: UInt64] = [:]
     private nonisolated(unsafe) static var displayRevalidationsInFlight: Set<KeychainCacheStore.Key> = []
+    private nonisolated(unsafe) static var legacyMigrationsInFlight: Set<UsageProvider> = []
     private nonisolated(unsafe) static var displayStalenessIntervalOverride: TimeInterval?
     private nonisolated(unsafe) static var displayUnavailableRetryIntervalOverride: TimeInterval?
     private static let displayStalenessInterval: TimeInterval = 30
@@ -78,9 +85,13 @@ public enum CookieHeaderCache {
         let key = self.key(for: provider, scope: scope)
         let (cached, generation) = self.beginDisplayRead(key: key)
         guard let cached else {
-            switch self.loadOutcome(provider: provider, scope: scope) {
-            case let .authoritative(entry):
-                return self.commitDisplaySnapshotIfCurrent(key: key, entry: entry, generation: generation)
+            switch self.loadOutcome(provider: provider, scope: scope, migrateLegacy: false) {
+            case let .authoritative(entry, loadedFromLegacy):
+                let committed = self.commitDisplaySnapshotIfCurrent(key: key, entry: entry, generation: generation)
+                if loadedFromLegacy {
+                    self.scheduleLegacyMigration(provider: provider)
+                }
+                return committed
             case .temporarilyUnavailable:
                 return self.commitTemporaryDisplaySnapshotIfCurrent(key: key, generation: generation)
             }
@@ -122,15 +133,31 @@ public enum CookieHeaderCache {
         key: KeychainCacheStore.Key,
         generation: UInt64)
     {
-        switch self.loadOutcome(provider: provider, scope: scope) {
-        case let .authoritative(entry):
+        switch self.loadOutcome(provider: provider, scope: scope, migrateLegacy: false) {
+        case let .authoritative(entry, loadedFromLegacy):
             _ = self.commitDisplaySnapshotIfCurrent(key: key, entry: entry, generation: generation)
+            if loadedFromLegacy {
+                self.scheduleLegacyMigration(provider: provider)
+            }
         case .temporarilyUnavailable:
             self.deferDisplayRetryIfCurrent(key: key, generation: generation)
         }
         self.displayCacheLock.lock()
         self.displayRevalidationsInFlight.remove(key)
         self.displayCacheLock.unlock()
+    }
+
+    private static func scheduleLegacyMigration(provider: UsageProvider) {
+        self.displayCacheLock.lock()
+        let inserted = self.legacyMigrationsInFlight.insert(provider).inserted
+        self.displayCacheLock.unlock()
+        guard inserted else { return }
+        Task(priority: .utility) {
+            _ = self.migrateLegacyEntryIfNeeded(provider: provider)
+            _ = self.displayCacheLock.withLock {
+                self.legacyMigrationsInFlight.remove(provider)
+            }
+        }
     }
 
     /// Keychain reads for the display cache happen outside the lock, so a concurrent `store` or
@@ -227,6 +254,7 @@ public enum CookieHeaderCache {
         self.displayCache.removeAll()
         self.displayGenerations.removeAll()
         self.displayRevalidationsInFlight.removeAll()
+        self.legacyMigrationsInFlight.removeAll()
         self.displayCacheLock.unlock()
     }
 
@@ -260,20 +288,24 @@ public enum CookieHeaderCache {
     }
 
     public static func load(provider: UsageProvider, scope: Scope? = nil) -> Entry? {
-        switch self.loadOutcome(provider: provider, scope: scope) {
-        case let .authoritative(entry):
+        switch self.loadOutcome(provider: provider, scope: scope, migrateLegacy: true) {
+        case let .authoritative(entry, _):
             entry
         case .temporarilyUnavailable:
             nil
         }
     }
 
-    private static func loadOutcome(provider: UsageProvider, scope: Scope?) -> LoadOutcome {
+    private static func loadOutcome(
+        provider: UsageProvider,
+        scope: Scope?,
+        migrateLegacy: Bool) -> LoadOutcome
+    {
         let key = self.key(for: provider, scope: scope)
         switch KeychainCacheStore.load(key: key, as: Entry.self) {
         case let .found(entry):
             self.log.debug("Cookie cache hit", metadata: ["provider": provider.rawValue])
-            return .authoritative(entry)
+            return .authoritative(entry, loadedFromLegacy: false)
         case .temporarilyUnavailable:
             self.log.debug("Cookie cache temporarily unavailable", metadata: ["provider": provider.rawValue])
             return .temporarilyUnavailable
@@ -284,14 +316,49 @@ public enum CookieHeaderCache {
             self.log.debug("Cookie cache miss", metadata: ["provider": provider.rawValue])
         }
 
-        guard scope == nil else { return .authoritative(nil) }
-        guard let legacy = self.loadLegacyEntry(for: provider) else { return .authoritative(nil) }
-        if KeychainCacheStore.storeResult(key: key, entry: legacy) {
-            if self.removeLegacyEntry(for: provider) == .removed {
-                self.log.debug("Cookie cache migrated from legacy store", metadata: ["provider": provider.rawValue])
-            }
+        guard scope == nil else { return .authoritative(nil, loadedFromLegacy: false) }
+        if migrateLegacy {
+            return .authoritative(
+                self.migrateLegacyEntryIfNeeded(provider: provider),
+                loadedFromLegacy: false)
         }
-        return .authoritative(legacy)
+        guard let legacy = self.loadLegacyEntry(for: provider) else {
+            return .authoritative(nil, loadedFromLegacy: false)
+        }
+        return .authoritative(legacy, loadedFromLegacy: true)
+    }
+
+    /// Re-reads both stores while serialized with global cookie mutations. A display-triggered
+    /// migration may be queued before a clear, so using the captured legacy entry here would
+    /// otherwise allow the delayed task to restore credentials the user just removed.
+    private static func migrateLegacyEntryIfNeeded(provider: UsageProvider) -> Entry? {
+        do {
+            return try self.withLegacyMutationLock {
+                let key = self.key(for: provider, scope: nil)
+                switch KeychainCacheStore.load(key: key, as: Entry.self) {
+                case let .found(entry):
+                    _ = self.removeLegacyEntry(for: provider)
+                    return entry
+                case .temporarilyUnavailable:
+                    return nil
+                case .invalid:
+                    KeychainCacheStore.clear(key: key)
+                case .missing:
+                    break
+                }
+
+                guard let legacy = self.loadLegacyEntry(for: provider) else { return nil }
+                if KeychainCacheStore.storeResult(key: key, entry: legacy),
+                   self.removeLegacyEntry(for: provider) == .removed
+                {
+                    self.log.debug("Cookie cache migrated from legacy store", metadata: ["provider": provider.rawValue])
+                }
+                return legacy
+            }
+        } catch {
+            self.log.error("Cookie cache migration lock failed: \(error)")
+            return nil
+        }
     }
 
     public static func store(
@@ -307,6 +374,25 @@ public enum CookieHeaderCache {
             return
         }
         let entry = Entry(cookieHeader: normalized, storedAt: now, sourceLabel: sourceLabel)
+        if scope == nil {
+            do {
+                try self.withLegacyMutationLock {
+                    self.store(entry: entry, provider: provider, scope: scope, sourceLabel: sourceLabel)
+                }
+            } catch {
+                self.log.error("Cookie cache store lock failed: \(error)")
+            }
+        } else {
+            self.store(entry: entry, provider: provider, scope: scope, sourceLabel: sourceLabel)
+        }
+    }
+
+    private static func store(
+        entry: Entry,
+        provider: UsageProvider,
+        scope: Scope?,
+        sourceLabel: String)
+    {
         let key = self.key(for: provider, scope: scope)
         guard KeychainCacheStore.storeResult(key: key, entry: entry) else { return }
         self.updateDisplaySnapshot(key: key, entry: entry)
@@ -322,6 +408,20 @@ public enum CookieHeaderCache {
     }
 
     public static func clearDetailed(provider: UsageProvider, scope: Scope? = nil) -> ClearSummary {
+        if scope == nil {
+            do {
+                return try self.withLegacyMutationLock {
+                    self.clearDetailedLocked(provider: provider, scope: scope)
+                }
+            } catch {
+                self.log.error("Cookie cache clear lock failed: \(error)")
+                return ClearSummary(clearedCount: 0, failedCount: 1)
+            }
+        }
+        return self.clearDetailedLocked(provider: provider, scope: scope)
+    }
+
+    private static func clearDetailedLocked(provider: UsageProvider, scope: Scope?) -> ClearSummary {
         let key = self.key(for: provider, scope: scope)
         let result = KeychainCacheStore.clearResult(key: key)
         var cleared = result == .removed ? 1 : 0
@@ -354,6 +454,17 @@ public enum CookieHeaderCache {
     }
 
     public static func clearAllScopesDetailed(provider: UsageProvider) -> ClearSummary {
+        do {
+            return try self.withLegacyMutationLock {
+                self.clearAllScopesDetailedLocked(provider: provider)
+            }
+        } catch {
+            self.log.error("Cookie cache clearAllScopes lock failed: \(error)")
+            return ClearSummary(clearedCount: 0, failedCount: 1)
+        }
+    }
+
+    private static func clearAllScopesDetailedLocked(provider: UsageProvider) -> ClearSummary {
         let (keys, enumerationFailed) = self.cookieKeysResult(for: provider)
         var cleared = 0
         var failedKeys = Set<KeychainCacheStore.Key>()
@@ -392,6 +503,17 @@ public enum CookieHeaderCache {
     }
 
     public static func clearAllDetailed() -> ClearSummary {
+        do {
+            return try self.withLegacyMutationLock {
+                self.clearAllDetailedLocked()
+            }
+        } catch {
+            self.log.error("Cookie cache clearAll lock failed: \(error)")
+            return ClearSummary(clearedCount: 0, failedCount: 1)
+        }
+    }
+
+    private static func clearAllDetailedLocked() -> ClearSummary {
         self.displayCacheLock.lock()
         let knownDisplayKeys = Set(self.displayCache.keys).union(self.displayGenerations.keys)
         self.displayCacheLock.unlock()
@@ -514,6 +636,39 @@ public enum CookieHeaderCache {
 
     static func hasKeychainEntryForTesting(provider: UsageProvider, scope: Scope? = nil) -> Bool {
         self.hasKeychainEntry(provider: provider, scope: scope)
+    }
+
+    static func migrateLegacyEntryIfNeededForTesting(provider: UsageProvider) -> Entry? {
+        self.migrateLegacyEntryIfNeeded(provider: provider)
+    }
+
+    private static func withLegacyMutationLock<T>(_ operation: () throws -> T) throws -> T {
+        try self.legacyMutationLock.withLock {
+            let lockURL = self.legacyMutationLockURL
+            try FileManager.default.createDirectory(
+                at: lockURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+            guard fd >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            defer {
+                _ = flock(fd, LOCK_UN)
+                close(fd)
+            }
+            while flock(fd, LOCK_EX) != 0 {
+                guard errno == EINTR else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
+            return try operation()
+        }
+    }
+
+    private static var legacyMutationLockURL: URL {
+        let base = self.legacyBaseURLOverride
+            ?? self.legacyURL(for: .codex).deletingLastPathComponent()
+        return base.appendingPathComponent("cookie-cache.lock")
     }
 
     private static func removeLegacyEntry(for provider: UsageProvider) -> LegacyRemovalResult {
