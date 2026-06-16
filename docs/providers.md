@@ -8,7 +8,7 @@ read_when:
 
 # Providers
 
-CodexBar currently registers 50 provider IDs. Some companies expose multiple surfaces, such as Codex vs OpenAI API or
+CodexBar currently registers 53 provider IDs. Some companies expose multiple surfaces, such as Codex vs OpenAI API or
 OpenCode vs OpenCode Go, because the auth source and quota shape differ.
 
 ## Fetch strategies (current)
@@ -72,6 +72,7 @@ headers, source selection, provider ordering, and token accounts are stored in `
 | LiteLLM | API key + base URL → `/key/info`, then `/user/info` or `/team/info` budget usage (`api`). |
 | Deepgram | API key → project discovery and usage breakdown API (`api`). |
 | Chutes | API key from config/env → subscription usage and quota API (`api`). |
+| Zed | Zed editor Keychain session → `cloud.zed.dev/client/users/me` for plan and quota data (`local`). |
 
 ## Codex
 - App Auto: OAuth API first; falls back to CLI only when OAuth credentials are missing or auth/refresh is invalid.
@@ -245,6 +246,12 @@ headers, source selection, provider ordering, and token accounts are stored in `
 - Reads `AIAssistantQuotaManager2.xml` for monthly credits and refill date.
 - Status: none (no status page).
 - Details: `docs/jetbrains.md`.
+
+## Zed
+- Reads the signed-in Zed editor session from the macOS Keychain (`credentials_url` / `https://zed.dev`).
+- Calls `GET https://cloud.zed.dev/client/users/me` for plan, billing cycle, Edit Predictions quota, and overdue invoice flag.
+- Sign in to the Zed editor first.
+- Details: `docs/zed.md`.
 
 ## Augment
 - Auto mode tries the `auggie` CLI first.
