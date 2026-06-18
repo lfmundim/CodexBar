@@ -291,13 +291,7 @@ extension StatusItemController {
         let tilt: CGFloat =
             style == .combined ? 0 : self.tiltAmount(for: primaryProvider) * .pi / 28
 
-        let statusIndicator: ProviderStatusIndicator = {
-            for provider in self.store.enabledProvidersForDisplay() {
-                let indicator = self.store.statusIndicator(for: provider)
-                if indicator.hasIssue { return indicator }
-            }
-            return .none
-        }()
+        let statusIndicator = self.store.statusIndicator(for: primaryProvider)
         if showBrandPercent,
            let brand = ProviderBrandIcon.image(for: primaryProvider)
         {

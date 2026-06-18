@@ -944,6 +944,8 @@ enum IconRenderer {
                 y: 2,
                 width: size,
                 height: size)
+            Self.clearStatusOverlayHalo(
+                NSBezierPath(ovalIn: rect.insetBy(dx: -1, dy: -1)))
             let path = NSBezierPath(ovalIn: rect)
             color.setFill()
             path.fill()
@@ -953,19 +955,33 @@ enum IconRenderer {
                 y: 4,
                 width: 2.0,
                 height: 6)
-            let linePath = NSBezierPath(roundedRect: lineRect, xRadius: 1, yRadius: 1)
-            color.setFill()
-            linePath.fill()
-
             let dotRect = Self.snapRect(
                 x: Self.baseSize.width - 6,
                 y: 2,
                 width: 2.0,
                 height: 2.0)
+
+            let haloRect = lineRect.union(dotRect).insetBy(dx: -1, dy: -1)
+            Self.clearStatusOverlayHalo(
+                NSBezierPath(roundedRect: haloRect, xRadius: 2, yRadius: 2))
+
+            let linePath = NSBezierPath(roundedRect: lineRect, xRadius: 1, yRadius: 1)
+            color.setFill()
+            linePath.fill()
             NSBezierPath(ovalIn: dotRect).fill()
         case .none:
             break
         }
+    }
+
+    private static func clearStatusOverlayHalo(_ path: NSBezierPath) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.setBlendMode(.clear)
+        // The fill color is ignored by .clear; it only drives the path fill operation.
+        NSColor.black.setFill()
+        path.fill()
+        ctx.restoreGState()
     }
 
     private static func withScaledContext(_ draw: () -> Void) {

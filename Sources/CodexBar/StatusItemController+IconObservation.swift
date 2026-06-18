@@ -11,10 +11,9 @@ extension StatusItemController {
         if mergeIcons {
             let primary = self.primaryProviderForUnifiedIcon()
             primaryProvider = primary
-            providerSignatures = [
-                self.providerStoreIconObservationSignature(for: primary, showBrandPercent: showBrandPercent),
-                "mergedStatus=\(self.mergedIconStatusIndicator().rawValue)",
-            ].joined(separator: "||")
+            providerSignatures = self.providerStoreIconObservationSignature(
+                for: primary,
+                showBrandPercent: showBrandPercent)
         } else {
             primaryProvider = nil
             providerSignatures = UsageProvider.allCases
@@ -59,13 +58,5 @@ extension StatusItemController {
             "refreshing=\(self.store.refreshingProviders.contains(provider) ? "1" : "0")",
             "text=\(displayText ?? "nil")",
         ].joined(separator: "|")
-    }
-
-    private func mergedIconStatusIndicator() -> ProviderStatusIndicator {
-        for provider in self.store.enabledProvidersForDisplay() {
-            let indicator = self.store.statusIndicator(for: provider)
-            if indicator.hasIssue { return indicator }
-        }
-        return .none
     }
 }
