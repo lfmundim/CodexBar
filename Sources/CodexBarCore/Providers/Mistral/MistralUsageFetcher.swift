@@ -117,10 +117,10 @@ public enum MistralUsageFetcher {
         try "csrftoken=\(self.validatedVibeCSRFToken(csrfToken))"
     }
 
-    // Builds a minimal Cookie header for console.mistral.ai.
-    // Only csrftoken + ory_session_* pass through; all other admin.mistral.ai cookies stay origin-bound.
+    /// Builds a minimal Cookie header for console.mistral.ai.
+    /// Only csrftoken + ory_session_* pass through; all other admin.mistral.ai cookies stay origin-bound.
     static func consoleCookieHeader(csrfToken: String, adminCookieHeader: String?) -> String {
-        var pairs: [String] = ["csrftoken=\(csrfToken)"]
+        var pairs = ["csrftoken=\(csrfToken)"]
         if let adminCookies = adminCookieHeader {
             let sessionPairs = CookieHeaderNormalizer.pairs(from: adminCookies)
                 .filter { $0.name.hasPrefix("ory_session_") }
