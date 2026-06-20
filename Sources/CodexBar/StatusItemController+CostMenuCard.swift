@@ -38,7 +38,9 @@ extension StatusItemController {
         width: CGFloat) -> NSMenuItem
     {
         let tooltipLines = Self.costMenuTooltipLines(tokenUsage: model.tokenUsage)
-        let visibleDetailLines = Self.costMenuVisibleDetailLines(tokenUsage: model.tokenUsage)
+        let visibleDetailLines = Self.costMenuVisibleDetailLines(
+            tokenUsage: model.tokenUsage,
+            hasSubmenu: submenu != nil)
         guard self.menuCardRenderingEnabledForController else {
             return Self.makeNativeCostMenuCardItem(
                 visibleDetailLines: visibleDetailLines,
@@ -92,7 +94,11 @@ extension StatusItemController {
             .filter { !$0.isEmpty }
     }
 
-    static func costMenuVisibleDetailLines(tokenUsage: UsageMenuCardView.Model.TokenUsageSection?) -> [String] {
+    static func costMenuVisibleDetailLines(
+        tokenUsage: UsageMenuCardView.Model.TokenUsageSection?,
+        hasSubmenu: Bool) -> [String]
+    {
+        guard !hasSubmenu else { return [] }
         let primaryLines = [
             tokenUsage?.sessionLine,
             tokenUsage?.monthLine,
